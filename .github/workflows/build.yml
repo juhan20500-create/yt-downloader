@@ -1,0 +1,89 @@
+name: build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: yt-downloader-windows.exe
+          - os: macos-latest
+            artifact: yt-downloader-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install python deps
+        run: pip install flask pyinstaller
+
+      # ffmpeg/ffprobe를 빌드에 함께 포장 (병합·구간컷에 필요)
+      - name: Get ffmpeg (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          choco install ffmpeg -y
+          FF=$(command -v ffmpeg)
+          FP=$(command -v ffprobe)
+          cp "$FF" ./ffmpeg.exe
+          cp "$FP" ./ffprobe.exe
+          ls -la ffmpeg.exe ffprobe.exe
+
+      - name: Get ffmpeg (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          brew install ffmpeg
+          cp "$(command -v ffmpeg)" ./ffmpeg
+          cp "$(command -v ffprobe)" ./ffprobe
+          ls -la ffmpeg ffprobe
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        run: >
+          pyinstaller --onefile --name yt-downloader
+          --add-binary "ffmpeg.exe;."
+          --add-binary "ffprobe.exe;."
+          downloader_app.py
+
+      - name: Build (macOS)
+        if: matrix.os == 'macos-latest'
+        run: >
+          pyinstaller --onefile --name yt-downloader
+          --add-binary "ffmpeg:."
+          --add-binary "ffprobe:."
+          downloader_app.py
+
+      - name: Rename artifact
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            mv dist/yt-downloader.exe "dist/${{ matrix.artifact }}"
+          else
+            mv dist/yt-downloader "dist/${{ matrix.artifact }}"
+          fi
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}

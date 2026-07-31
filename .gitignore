@@ -1,0 +1,19 @@
+# 빌드 부산물
+build/
+dist/
+*.spec
+ffmpeg
+ffmpeg.exe
+ffprobe
+ffprobe.exe
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 로컬 데이터
+preview/
+"다운받은 영상"/
+*.log

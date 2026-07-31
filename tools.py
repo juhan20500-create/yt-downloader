@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import urllib.request
+import zipfile
 
 APP_NAME = "yt-downloader"
 
@@ -35,18 +36,70 @@ def _exe(name):
     return name + ".exe" if sys.platform == "win32" else name
 
 
-def ffmpeg_path():
-    p = os.path.join(_bundle_dir(), _exe("ffmpeg"))
+def _mark_exec(p):
+    if sys.platform != "win32" and os.path.exists(p):
+        os.chmod(p, os.stat(p).st_mode | stat.S_IEXEC)
+
+
+def _ensure_from(name):
+    """ffmpeg 또는 ffprobe 정적 실행파일을 확보한다.
+    우선순위: 포장본 > PATH > 자동 다운로드(정적 빌드)."""
+    exe = _exe(name)
+    # 1) 빌드에 포장된 것
+    p = os.path.join(_bundle_dir(), exe)
     if os.path.exists(p):
         return p
-    return shutil.which("ffmpeg") or "ffmpeg"
+    # 2) 이미 받아둔 것
+    local = os.path.join(data_dir(), exe)
+    if os.path.exists(local):
+        return local
+    # 3) PATH
+    found = shutil.which(name)
+    if found:
+        return found
+    # 4) 정적 빌드 다운로드
+    try:
+        _download_static(name, local)
+        _mark_exec(local)
+        if os.path.exists(local):
+            return local
+    except Exception as e:
+        print(f"[경고] {name} 자동 준비 실패: {e}")
+    return name  # 최후: PATH 이름 그대로 (실패 시 에러 메시지 유도)
+
+
+def _download_static(name, dest):
+    """OS별 정적 ffmpeg/ffprobe를 내려받아 dest에 놓는다."""
+    tmp = dest + ".download"
+    if sys.platform == "win32":
+        # BtbN 정적 빌드(zip) — bin/ 안에 ffmpeg.exe, ffprobe.exe
+        url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        zpath = os.path.join(data_dir(), "_ff_win.zip")
+        if not os.path.exists(zpath):
+            print("ffmpeg를 처음 한 번 내려받는 중… (약 80MB)")
+            urllib.request.urlretrieve(url, zpath)
+        with zipfile.ZipFile(zpath) as z:
+            member = next(m for m in z.namelist() if m.endswith(f"bin/{name}.exe"))
+            with z.open(member) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+    else:
+        # macOS/리눅스: evermeet 정적 빌드(zip) — 개별 바이너리
+        print(f"{name}를 처음 한 번 내려받는 중…")
+        url = f"https://evermeet.cx/ffmpeg/getrelease/{name}/zip"
+        urllib.request.urlretrieve(url, tmp)
+        with zipfile.ZipFile(tmp) as z:
+            member = next(m for m in z.namelist() if os.path.basename(m) == name)
+            with z.open(member) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+        os.remove(tmp)
+
+
+def ffmpeg_path():
+    return _ensure_from("ffmpeg")
 
 
 def ffprobe_path():
-    p = os.path.join(_bundle_dir(), _exe("ffprobe"))
-    if os.path.exists(p):
-        return p
-    return shutil.which("ffprobe") or "ffprobe"
+    return _ensure_from("ffprobe")
 
 
 def ensure_ytdlp():

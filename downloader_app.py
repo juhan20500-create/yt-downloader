@@ -483,7 +483,6 @@ TRIM_HTML = r"""
     border-left:2px solid var(--accent); border-right:2px solid var(--accent); }
   .tl .handle{ position:absolute; top:-4px; width:14px; height:52px; margin-left:-7px; border-radius:5px;
     background:var(--accent); cursor:ew-resize; box-shadow:0 2px 8px rgba(0,0,0,.5); }
-  .tl .play{ position:absolute; top:0; bottom:0; width:2px; background:var(--ok); pointer-events:none; }
   .times{ display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-top:10px; }
   .tbox{ background:var(--elev); border:1px solid var(--line); border-radius:8px; padding:8px 12px; font-size:13px; }
   .tbox b{ color:var(--accent); font-variant-numeric:tabular-nums; }
@@ -513,7 +512,6 @@ TRIM_HTML = r"""
     </div>
     <div class="tl" id="tl">
       <div class="sel" id="sel"></div>
-      <div class="play" id="play"></div>
       <div class="handle" id="hStart"></div>
       <div class="handle" id="hEnd"></div>
     </div>
@@ -535,7 +533,7 @@ TRIM_HTML = r"""
 <script>
 let dur=0, vidId='', title='', start=0, end=0;
 const $=id=>document.getElementById(id);
-const player=$('player'), tl=$('tl'), sel=$('sel'), playbar=$('play'), hStart=$('hStart'), hEnd=$('hEnd');
+const player=$('player'), tl=$('tl'), sel=$('sel'), hStart=$('hStart'), hEnd=$('hEnd');
 
 function fmt(t){ if(t<0)t=0; const m=Math.floor(t/60), s=Math.floor(t%60), ms=Math.round((t-Math.floor(t))*1000);
   return m+':'+String(s).padStart(2,'0')+'.'+String(ms).padStart(3,'0'); }
@@ -570,7 +568,7 @@ $('loadBtn').onclick=async()=>{
 };
 
 // 재생바 + 현재시간 갱신 (초록 마커 하나만 사용)
-player.addEventListener('timeupdate',()=>{ if(dur){playbar.style.left=(player.currentTime/dur*tlWidth())+'px'; $('cur').textContent=fmt(player.currentTime);} });
+player.addEventListener('timeupdate',()=>{ if(dur){ $('cur').textContent=fmt(player.currentTime); } });
 player.addEventListener('loadedmetadata',()=>{ if(!dur){dur=player.duration; end=dur; layout();} });
 // 재생/일시정지
 function togglePlay(){ if(player.paused){player.play();$('playBtn').textContent='❚❚ 일시정지';} else {player.pause();$('playBtn').textContent='▶ 재생';} }
@@ -581,9 +579,12 @@ player.addEventListener('ended',()=>{ $('playBtn').textContent='▶ 재생'; });
 // 손잡이 드래그
 function dragHandle(handle,which){
   handle.addEventListener('mousedown',e=>{ e.preventDefault();
+    player.pause(); $('playBtn').textContent='▶ 재생';
     const move=ev=>{ const rect=tl.getBoundingClientRect();
       const t=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width))*dur;
-      which==='s'?setStart(t):setEnd(t); };
+      which==='s'?setStart(t):setEnd(t);
+      if(dur) player.currentTime = which==='s'?start:end;
+    };
     const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); };
     document.addEventListener('mousemove',move); document.addEventListener('mouseup',up);
   });

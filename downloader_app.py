@@ -1,3 +1,6 @@
+# Copyright (c) 2026 juhan20500-create. All rights reserved.
+# 개인 사용만 허용. 재배포·공유·판매 금지. 자세한 내용은 LICENSE 참고.
+# Personal use only. Redistribution prohibited. See LICENSE.
 """동영상 다운로더 — 채널 모니터와 같은 로컬 웹 UI 버전.
 
 기존 CLI(youdownloader.py)의 다운로드 로직을 그대로 재사용하고,
@@ -10,19 +13,16 @@ import re
 import subprocess
 import sys
 import webbrowser
-from threading import Timer
+from threading import Thread, Timer
 
 from flask import Flask, request, jsonify, Response, send_file
 
-# 기존 CLI 다운로더의 검증된 로직을 그대로 가져다 쓴다.
-sys.path.insert(0, "/Users/juhan")
+# 같은 폴더의 검증된 다운로드 로직 + 도구 관리 모듈
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import youdownloader as yd  # noqa: E402
+import tools  # noqa: E402
 
-PORT = 5055
-DOWNLOAD_DIR = os.path.join("/Users/juhan", yd.DOWNLOAD_DIR_NAME)
-PREVIEW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "preview")
-
-app = Flask(__name__)
+PORT = int(os.environ.get("YTDL_PORT", "5055"))
 
 
 def open_browser(url):
@@ -72,35 +72,34 @@ def open_browser(url):
     webbrowser.open(url)   # 못 찾으면 기본 브라우저
 
 
-def build_streaming_command(url, folder, title, audio_only=False):
-    """기존 다운로드 명령에 실시간 진행률 출력(newline + progress-template)을 더한다.
+def _default_download_dir():
+    """사용자 홈의 'Downloads/다운받은 영상'에 저장 (없으면 홈 아래)."""
+    home = os.path.expanduser("~")
+    dl = os.path.join(home, "Downloads")
+    base = dl if os.path.isdir(dl) else home
+    return os.path.join(base, yd.DOWNLOAD_DIR_NAME)
 
-    audio_only=True 면 영상 없이 소리만 받아 mp3로 저장한다.
-    """
+
+DOWNLOAD_DIR = _default_download_dir()
+PREVIEW_DIR = os.path.join(tools.data_dir(), "preview")
+
+app = Flask(__name__)
+
+
+def build_streaming_command(url, folder, title):
+    """기존 다운로드 명령에 실시간 진행률 출력(newline + progress-template)을 더한다."""
     safe_title = title.replace("%", "%%")
     output_template = os.path.join(folder, f"{safe_title}.%(ext)s")
-    cmd = [
+    return [
         yd.get_ytdlp_path(url),
         *yd.get_common_ytdlp_args(url),
         "--no-playlist",
         "--newline",
         "--progress-template",
         "PROG|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s",
-    ]
-    if audio_only:
-        cmd += [
-            "--format", "bestaudio/best",
-            "--extract-audio",
-            "--audio-format", "mp3",
-            "--audio-quality", "0",   # 최고 품질
-        ]
-    else:
-        cmd += [
-            "--merge-output-format", "mp4",
-            "--remux-video", "mp4",
-            "--format", yd.FORMAT_SELECTOR,
-        ]
-    cmd += [
+        "--merge-output-format", "mp4",
+        "--remux-video", "mp4",
+        "--format", yd.FORMAT_SELECTOR,
         "--concurrent-fragments", "1",
         "--extractor-retries", "10",
         "--fragment-retries", "10",
@@ -109,31 +108,17 @@ def build_streaming_command(url, folder, title, audio_only=False):
         "-o", output_template,
         url,
     ]
-    return cmd
 
 
-def find_latest_audio(folder):
-    """가장 최근에 만들어진 오디오 파일을 찾는다(공용 함수는 영상만 찾아서 별도로 둔다)."""
-    import glob
-    files = []
-    for ext in ("*.mp3", "*.m4a", "*.opus", "*.wav", "*.aac"):
-        files.extend(glob.glob(os.path.join(folder, ext)))
-    files = [f for f in files if not f.endswith((".part", ".ytdl"))]
-    if not files:
-        return None
-    files.sort(key=os.path.getmtime, reverse=True)
-    return files[0]
-
-
-def download_stream(url, audio_only=False):
+def download_stream(url):
     """URL 하나를 받아 진행 상황을 이벤트(dict)로 하나씩 흘려보낸다."""
     folder = DOWNLOAD_DIR
     os.makedirs(folder, exist_ok=True)
 
-    # 이미 받은 영상이면 바로 알림 (소리만 받기는 별도 파일이라 중복검사 제외)
+    # 이미 받은 영상이면 바로 알림
     video_id = yd.extract_video_id(url)
     index = yd.load_download_index(folder) if video_id else {}
-    if not audio_only and video_id and video_id in index:
+    if video_id and video_id in index:
         existing = os.path.join(folder, index[video_id])
         if os.path.exists(existing):
             os.utime(existing, None)
@@ -141,14 +126,13 @@ def download_stream(url, audio_only=False):
             return
 
     # 메타(제목 + 화질)
-    resolutions = [] if audio_only else yd.get_available_resolutions(url)
+    resolutions = yd.get_available_resolutions(url)
     title = yd.get_video_title(url)
-    yield {"stage": "meta", "title": title, "resolutions": resolutions,
-           "audio": audio_only}
+    yield {"stage": "meta", "title": title, "resolutions": resolutions}
 
     # 다운로드 (실시간 진행률 파싱). 틱톡은 JS 챌린지가 확률적이라 여러 번 재시도.
     import time
-    cmd = build_streaming_command(url, folder, title, audio_only)
+    cmd = build_streaming_command(url, folder, title)
     max_tries = 5 if yd.is_tiktok(url) else 2
     started_at = time.time() - 1  # 이번 실행에서 새로 생긴 파일만 성공으로 인정
     saved, output = None, ""
@@ -168,7 +152,7 @@ def download_stream(url, audio_only=False):
                 log_lines.append(line)
         proc.wait()
         output = "\n".join(log_lines)
-        cand = find_latest_audio(folder) if audio_only else yd.find_latest_downloaded_file(folder)
+        cand = yd.find_latest_downloaded_file(folder)
         # 이번 시도에서 실제로 생성/갱신된 파일만 인정 (이전 다운로드 오탐 방지)
         if proc.returncode == 0 and cand and os.path.getmtime(cand) >= started_at:
             saved = cand
@@ -185,16 +169,9 @@ def download_stream(url, audio_only=False):
                "log": output.strip()[-2000:]}
         return
 
-    # 소리만 받은 건 영상 목록과 별개이므로 중복 인덱스에 넣지 않는다
-    if video_id and not audio_only:
+    if video_id:
         index[video_id] = os.path.basename(saved)
         yd.save_download_index(folder, index)
-
-    if audio_only:
-        size_mb = round(os.path.getsize(saved) / 1048576, 1)
-        yield {"stage": "done", "filename": os.path.basename(saved),
-               "audio": True, "size": size_mb, "warnings": []}
-        return
 
     info = yd.get_media_info(saved)
     achieved = min(info["width"], info["height"]) if info else None
@@ -244,8 +221,6 @@ INDEX_HTML = r"""
   button:hover{ filter:brightness(1.08); }
   button:disabled{ opacity:.5; cursor:default; box-shadow:none; }
   .hint{ color:var(--muted); font-size:12.5px; }
-  button.audio{ background:var(--elev); color:var(--txt); border:1px solid var(--line); box-shadow:none; }
-  button.audio:hover{ border-color:var(--accent); }
   #jobs{ margin-top:22px; display:flex; flex-direction:column; gap:14px; }
   .job{ background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; }
   .job .jtitle{ font-size:14.5px; font-weight:650; margin-bottom:4px; word-break:break-all; }
@@ -281,7 +256,6 @@ INDEX_HTML = r"""
     <textarea id="urls" placeholder="URL 붙여넣기 (여러 개면 한 줄에 하나씩)"></textarea>
     <div class="row">
       <button id="go">다운로드</button>
-      <button id="goAudio" class="audio">🎵 소리만 (mp3)</button>
       <span class="hint" id="hint">유튜브 shorts·롱폼, 틱톡 지원</span>
     </div>
   </div>
@@ -310,14 +284,13 @@ function jobCard(url){
   return el;
 }
 
-async function runOne(url, audioOnly){
+async function runOne(url){
   const card = jobCard(url);
   const titleEl = card.querySelector('.jtitle');
   const barEl = card.querySelector('.bar > i');
   const metaEl = card.querySelector('.jmeta');
   try{
-    const resp = await fetch('/download?url=' + encodeURIComponent(url)
-                             + (audioOnly ? '&audio=1' : ''));
+    const resp = await fetch('/download?url=' + encodeURIComponent(url));
     if(!resp.ok) throw new Error('서버 오류 ' + resp.status);
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
@@ -344,9 +317,8 @@ function applyEvent(ev, els){
   const {titleEl, barEl, metaEl} = els;
   if(ev.stage === 'meta'){
     titleEl.innerHTML = `${esc(ev.title)} <span class="badge run">진행</span>`;
-    const res = ev.audio ? '🎵 소리만 받는 중 (mp3)'
-      : ((ev.resolutions && ev.resolutions.length)
-          ? '사용가능 ' + ev.resolutions.map(r=>r+'p').join(' · ') : '화질 조회 실패');
+    const res = (ev.resolutions && ev.resolutions.length)
+      ? '사용가능 ' + ev.resolutions.map(r=>r+'p').join(' · ') : '화질 조회 실패';
     metaEl.innerHTML = `<span>${esc(res)}</span>`;
   } else if(ev.stage === 'progress'){
     const p = parseFloat((ev.percent||'').replace('%','')) || 0;
@@ -360,13 +332,8 @@ function applyEvent(ev, els){
     barEl.style.width = '100%';
     titleEl.innerHTML = `${esc(ev.filename)} <span class="badge ok">완료</span>`;
     let m = [];
-    if(ev.audio){
-      m.push('🎵 <b>소리만</b> (mp3)');
-      if(ev.size) m.push(`${ev.size}MB`);
-    } else {
-      if(ev.achieved) m.push(`저장화질 <b>${ev.achieved}p</b>`);
-      if(ev.maxres) m.push(`최고 ${ev.maxres}p`);
-    }
+    if(ev.achieved) m.push(`저장화질 <b>${ev.achieved}p</b>`);
+    if(ev.maxres) m.push(`최고 ${ev.maxres}p`);
     metaEl.innerHTML = m.map(x=>`<span>${x}</span>`).join('');
     if(ev.warnings && ev.warnings.length){
       const w = document.createElement('div'); w.className='warn';
@@ -386,17 +353,14 @@ function applyEvent(ev, els){
   }
 }
 
-const audioBtn = document.getElementById('goAudio');
-async function runAll(audioOnly){
+goBtn.onclick = async ()=>{
   const urls = urlsEl.value.split('\n').map(s=>s.trim()).filter(Boolean);
   if(!urls.length) return;
-  goBtn.disabled = true; audioBtn.disabled = true;
+  goBtn.disabled = true;
   urlsEl.value = '';
-  for(const u of urls){ await runOne(u, audioOnly); }   // 하나씩 순차 (충돌 방지)
-  goBtn.disabled = false; audioBtn.disabled = false;
-}
-goBtn.onclick = ()=>runAll(false);
-audioBtn.onclick = ()=>runAll(true);
+  for(const u of urls){ await runOne(u); }   // 하나씩 순차 (충돌 방지)
+  goBtn.disabled = false;
+};
 urlsEl.addEventListener('keydown', e=>{
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) goBtn.click();
 });
@@ -415,14 +379,21 @@ def index():
 @app.route("/download")
 def download():
     url = (request.args.get("url") or "").strip()
-    audio_only = request.args.get("audio") == "1"
     if not url:
         return jsonify({"error": "url 없음"}), 400
 
     def gen():
         try:
-            for ev in download_stream(url, audio_only):
+            for ev in download_stream(url):
                 yield json.dumps(ev, ensure_ascii=False) + "\n"
+        except FileNotFoundError as e:
+            # WinError 2 — yt-dlp 나 ffmpeg 를 찾지 못한 경우. 원인을 화면에 알린다.
+            yield json.dumps({"stage": "error", "hints": [
+                "다운로드 도구(yt-dlp 또는 ffmpeg)를 찾지 못했습니다.",
+                "백신이 파일을 지웠거나, 처음 준비가 아직 끝나지 않았을 수 있습니다.",
+                "프로그램을 껐다 켠 뒤에도 같으면 백신 예외에 등록해 주세요.",
+                f"({type(e).__name__}: {e})",
+            ], "log": ""}, ensure_ascii=False) + "\n"
         except Exception as e:
             yield json.dumps({"stage": "error", "hints": [f"{type(e).__name__}: {e}"],
                               "log": ""}, ensure_ascii=False) + "\n"
@@ -433,7 +404,15 @@ def download():
 @app.route("/open_folder", methods=["POST"])
 def open_folder():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    subprocess.run(["open", DOWNLOAD_DIR])
+    try:
+        if sys.platform == "win32":
+            os.startfile(DOWNLOAD_DIR)          # noqa: winonly
+        elif sys.platform == "darwin":
+            subprocess.run(["open", DOWNLOAD_DIR])
+        else:
+            subprocess.run(["xdg-open", DOWNLOAD_DIR])
+    except Exception:
+        pass
     return jsonify({"ok": True})
 
 
@@ -451,7 +430,7 @@ def _safe_id(url):
 def _ffprobe_duration(path):
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [tools.ffprobe_path(), "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, timeout=30).stdout.strip()
         return float(out)
@@ -514,7 +493,7 @@ def cut():
         return f"{int(t)//3600:02d}:{int(t)%3600//60:02d}:{t%60:06.3f}"
     out_name = f"{safe} [{int(start)}-{int(end)}s].mp4"
     out_path = os.path.join(DOWNLOAD_DIR, out_name)
-    cmd = ["ffmpeg", "-y", "-i", src, "-ss", s(start), "-to", s(end),
+    cmd = [tools.ffmpeg_path(), "-y", "-i", src, "-ss", s(start), "-to", s(end),
            "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", out_path]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0 or not os.path.exists(out_path):
@@ -662,7 +641,6 @@ function dragHandle(handle,which){
     const move=ev=>{ const rect=tl.getBoundingClientRect();
       const t=Math.max(0,Math.min(1,(ev.clientX-rect.left)/rect.width))*dur;
       which==='s'?setStart(t):setEnd(t);
-      // 손잡이가 가리키는 지점의 프레임을 화면에 표시
       if(dur) player.currentTime = which==='s'?start:end;
     };
     const up=()=>{ document.removeEventListener('mousemove',move); document.removeEventListener('mouseup',up); };
@@ -704,9 +682,25 @@ def trim_page():
     return TRIM_HTML
 
 
+def _pick_port(start):
+    import socket
+    for port in range(start, start + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    return start
+
+
 if __name__ == "__main__":
-    if not yd.ensure_tool_exists(yd.YT_DLP_PATH):
-        print("❌ yt-dlp 미설치")
-        sys.exit(1)
-    (None if os.environ.get("NO_BROWSER") else Timer(1.0, lambda: open_browser(f"http://127.0.0.1:{PORT}")).start())
-    app.run(port=PORT, debug=False, threaded=True)
+    # yt-dlp / ffmpeg 경로를 확보해 다운로드 로직에 주입
+    try:
+        yd.YT_DLP_PATH = tools.ensure_ytdlp()
+        yd.FFMPEG_PATH = tools.ffmpeg_path()
+        yd.FFPROBE_PATH = tools.ffprobe_path()
+        Thread(target=tools.update_ytdlp_bg, args=(yd.YT_DLP_PATH,), daemon=True).start()
+    except Exception as e:
+        print(f"[오류] 도구 준비 실패: {e}\n인터넷 연결을 확인하고 다시 실행하세요.")
+    port = _pick_port(PORT)
+    Timer(1.0, lambda: open_browser(f"http://127.0.0.1:{port}")).start()
+    print(f"동영상 다운로더 실행 중 → http://127.0.0.1:{port}  (종료: Ctrl+C)")
+    app.run(port=port, debug=False, threaded=True)

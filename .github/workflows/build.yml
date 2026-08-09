@@ -1,5 +1,8 @@
 name: build
 
+# 태그(v1.0 등)를 push하면 윈도우/맥 실행파일을 빌드해 Release에 첨부한다.
+# yt-dlp / ffmpeg / ffprobe 를 실행파일 안에 함께 넣는다.
+# 실행 중에 인터넷에서 도구를 받지 않으므로, 백신이나 사내망에 막히지 않는다.
 on:
   push:
     tags:
@@ -30,13 +33,52 @@ jobs:
       - name: Install python deps
         run: pip install flask pyinstaller
 
+      - name: Fetch tools (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p bundle
+          curl -L -o bundle/yt-dlp.exe \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe
+          curl -L -o ff.zip \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
+          unzip -q ff.zip -d ffdir
+          find ffdir -name "ffmpeg.exe"  -exec cp {} bundle/ \;
+          find ffdir -name "ffprobe.exe" -exec cp {} bundle/ \;
+          ls -lh bundle
+
+      - name: Fetch tools (macOS)
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        run: |
+          mkdir -p bundle
+          curl -L -o bundle/yt-dlp \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos
+          chmod +x bundle/yt-dlp
+          for t in ffmpeg ffprobe; do
+            curl -L -o "$t.zip" "https://evermeet.cx/ffmpeg/getrelease/$t/zip"
+            unzip -q -o "$t.zip" -d bundle
+            chmod +x "bundle/$t"
+          done
+          ls -lh bundle
+
       - name: Build (Windows)
         if: matrix.os == 'windows-latest'
-        run: pyinstaller --onefile --name yt-downloader downloader_app.py
+        run: >
+          pyinstaller --onefile --name yt-downloader
+          --add-binary "bundle/yt-dlp.exe;."
+          --add-binary "bundle/ffmpeg.exe;."
+          --add-binary "bundle/ffprobe.exe;."
+          downloader_app.py
 
       - name: Build (macOS)
         if: matrix.os == 'macos-latest'
-        run: pyinstaller --onefile --name yt-downloader downloader_app.py
+        run: >
+          pyinstaller --onefile --name yt-downloader
+          --add-binary "bundle/yt-dlp:."
+          --add-binary "bundle/ffmpeg:."
+          --add-binary "bundle/ffprobe:."
+          downloader_app.py
 
       - name: Rename artifact
         shell: bash
@@ -46,6 +88,7 @@ jobs:
           else
             mv dist/yt-downloader "dist/${{ matrix.artifact }}"
           fi
+          ls -lh dist
 
       - name: Upload to Release
         if: startsWith(github.ref, 'refs/tags/')

@@ -339,6 +339,14 @@ def download():
         try:
             for ev in download_stream(url):
                 yield json.dumps(ev, ensure_ascii=False) + "\n"
+        except FileNotFoundError as e:
+            # WinError 2 — yt-dlp 나 ffmpeg 를 찾지 못한 경우. 원인을 화면에 알린다.
+            yield json.dumps({"stage": "error", "hints": [
+                "다운로드 도구(yt-dlp 또는 ffmpeg)를 찾지 못했습니다.",
+                "백신이 파일을 지웠거나, 처음 준비가 아직 끝나지 않았을 수 있습니다.",
+                "프로그램을 껐다 켠 뒤에도 같으면 백신 예외에 등록해 주세요.",
+                f"({type(e).__name__}: {e})",
+            ], "log": ""}, ensure_ascii=False) + "\n"
         except Exception as e:
             yield json.dumps({"stage": "error", "hints": [f"{type(e).__name__}: {e}"],
                               "log": ""}, ensure_ascii=False) + "\n"

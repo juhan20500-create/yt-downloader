@@ -108,19 +108,28 @@ def ffprobe_path():
 def ensure_ytdlp():
     if os.environ.get("YT_DLP_PATH"):
         return os.environ["YT_DLP_PATH"]
+    # 1) 빌드에 함께 포장된 것 — 인터넷 없이도 바로 쓴다
+    for n in (_exe("yt-dlp"), "yt-dlp"):
+        p = os.path.join(_bundle_dir(), n)
+        if os.path.exists(p):
+            _mark_exec(p)
+            return p
+    # 2) 컴퓨터에 설치된 것
     found = shutil.which("yt-dlp")
     if found:
         return found
+    # 3) 이미 받아둔 것
     name = ("yt-dlp.exe" if sys.platform == "win32"
             else "yt-dlp_macos" if sys.platform == "darwin" else "yt-dlp")
     local = os.path.join(data_dir(), name)
-    if not os.path.exists(local):
-        print("yt-dlp를 처음 한 번 내려받는 중… (약 30MB)")
-        url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{name}"
-        urllib.request.urlretrieve(url, local)
-        if sys.platform != "win32":
-            os.chmod(local, os.stat(local).st_mode | stat.S_IEXEC)
-        print("yt-dlp 준비 완료.")
+    if os.path.exists(local):
+        return local
+    # 4) 마지막으로 내려받기 (백신이나 네트워크가 막으면 여기서 실패한다)
+    print("yt-dlp를 처음 한 번 내려받는 중… (약 30MB)")
+    url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{name}"
+    urllib.request.urlretrieve(url, local)
+    _mark_exec(local)
+    print("yt-dlp 준비 완료.")
     return local
 
 

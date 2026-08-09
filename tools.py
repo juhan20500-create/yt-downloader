@@ -1,3 +1,6 @@
+# Copyright (c) 2026 juhan20500-create. All rights reserved.
+# 개인 사용만 허용. 재배포·공유·판매 금지. 자세한 내용은 LICENSE 참고.
+# Personal use only. Redistribution prohibited. See LICENSE.
 """외부 도구(yt-dlp, ffmpeg) 경로 관리.
 
 - yt-dlp: PATH에 있으면 그걸, 없으면 최신 실행파일을 사용자 폴더에 자동 다운로드.

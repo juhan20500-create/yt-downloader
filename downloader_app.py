@@ -722,6 +722,28 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[오류] 도구 준비 실패: {e}\n인터넷 연결을 확인하고 다시 실행하세요.")
     port = _pick_port(PORT)
-    Timer(1.0, lambda: open_browser(f"http://127.0.0.1:{port}")).start()
-    print(f"동영상 다운로더 실행 중 → http://127.0.0.1:{port}  (종료: Ctrl+C)")
-    app.run(port=port, debug=False, threaded=True)
+    site = f"http://127.0.0.1:{port}"
+
+    def open_when_ready():
+        """서버가 실제로 응답할 때까지 기다렸다 연다.
+
+        시작할 때 도구를 준비하느라 시간이 걸린다. 그 전에 브라우저를 열면
+        "사이트에 연결할 수 없음" 이 떠서 고장난 것처럼 보인다.
+        """
+        import socket
+        import time
+        for _ in range(120):          # 최대 60초
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sk:
+                if sk.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.5)
+        open_browser(site)
+
+    if not os.environ.get("NO_BROWSER"):
+        Timer(0.3, open_when_ready).start()
+    print(f"동영상 다운로더 실행 중 -> {site}  (종료: Ctrl+C)")
+    try:
+        app.run(port=port, debug=False, threaded=True)
+    except Exception as e:
+        print(f"[오류] 실행하지 못했습니다: {type(e).__name__}: {e}")
+        input("엔터를 누르면 창이 닫힙니다...")

@@ -110,6 +110,19 @@ def build_streaming_command(url, folder, title):
     ]
 
 
+def normalize_url(url):
+    """rednote.com 주소를 xiaohongshu.com 으로 바꾼다.
+
+    같은 글이라도 rednote.com 은 전용 처리기가 없어 화질 정보를 못 읽고
+    일반 처리기로 대충 받는다. 도메인만 바꾸면 제대로 받아진다.
+    주소 뒤의 xsec_token 은 그대로 둔다. 그게 없으면 아무것도 못 받는다.
+    """
+    m = re.match(r"https?://(?:www\.)?rednote\.com/explore/([^/?#]+)(.*)$", url.strip())
+    if m:
+        return f"https://www.xiaohongshu.com/discovery/item/{m.group(1)}{m.group(2)}"
+    return url
+
+
 def download_stream(url):
     """URL 하나를 받아 진행 상황을 이벤트(dict)로 하나씩 흘려보낸다."""
     folder = DOWNLOAD_DIR
@@ -378,7 +391,7 @@ def index():
 
 @app.route("/download")
 def download():
-    url = (request.args.get("url") or "").strip()
+    url = normalize_url((request.args.get("url") or "").strip())
     if not url:
         return jsonify({"error": "url 없음"}), 400
 
@@ -442,7 +455,7 @@ def _ffprobe_duration(path):
 def load_video():
     """URL을 받아 미리보기용으로 영상을 내려받고 메타를 돌려준다."""
     d = request.get_json() or {}
-    url = (d.get("url") or "").strip()
+    url = normalize_url((d.get("url") or "").strip())
     if not url:
         return jsonify({"error": "url 없음"}), 400
     os.makedirs(PREVIEW_DIR, exist_ok=True)

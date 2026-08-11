@@ -157,7 +157,9 @@ def download_stream(url):
     max_tries = 5 if yd.is_tiktok(url) else 2
     started_at = time.time() - 1  # 이번 실행에서 새로 생긴 파일만 성공으로 인정
     saved, output = None, ""
-    for attempt in range(1, max_tries + 1):
+    attempt = 0
+    while attempt < max_tries:
+        attempt += 1
         proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1,
@@ -179,6 +181,16 @@ def download_stream(url):
             saved = cand
             break
         saved = None
+        # 크롬이 켜져 있으면 쿠키 파일이 잠겨 읽지 못한다(윈도우에서 흔하다).
+        # 영상 문제가 아니므로 쿠키를 빼고 곧바로 다시 해본다.
+        # 쿠키 문제는 영상 잘못이 아니므로 시도 횟수로 치지 않는다.
+        # note_cookie_failure 는 한 번만 True 라 무한히 돌지 않는다.
+        if yd.note_cookie_failure(output):
+            cmd = yd.strip_cookie_args(cmd)
+            attempt -= 1
+            yield {"stage": "progress", "percent": "",
+                   "speed": "크롬 쿠키를 읽지 못해 쿠키 없이 다시 시도…", "eta": ""}
+            continue
         if attempt < max_tries:
             yield {"stage": "progress", "percent": "",
                    "speed": f"재시도 {attempt}/{max_tries - 1}…", "eta": ""}
@@ -474,7 +486,7 @@ def load_video():
                "--no-playlist", "--merge-output-format", "mp4",
                "--remux-video", "mp4", "--format", yd.FORMAT_SELECTOR,
                "--force-overwrites", "-o", os.path.join(PREVIEW_DIR, vid + ".%(ext)s"), url]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = yd.run_ytdlp(cmd, capture_output=True, text=True)
         if not os.path.exists(target):
             return jsonify({"error": "영상 로드 실패",
                             "log": ((proc.stderr or "") + (proc.stdout or ""))[-1500:]}), 500

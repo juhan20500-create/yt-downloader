@@ -70,8 +70,64 @@ def get_ytdlp_path(url: str):
     # 단일 yt-dlp(표준 빌드에 impersonation 포함)로 유튜브·틱톡 모두 처리
     return YT_DLP_PATH
 
+# 쿠키를 못 읽어서 실패한 것인지 알아보는 표시들.
+# 윈도우에서는 크롬이 켜져 있으면 쿠키 파일이 잠겨 복사되지 않는다.
+# 이건 영상 문제가 아니므로, 쿠키 없이 다시 하면 대개 받아진다.
+COOKIE_FAIL_SIGNS = (
+    "could not copy chrome cookie database",
+    "could not copy cookie database",
+    "could not find chrome cookies database",
+    "could not find cookies database",
+    "failed to decrypt",
+    "unable to read cookies",
+    "cookies from browser",
+)
+
+COOKIES_DISABLED = False   # 한 번 실패하면 이번 실행 내내 쿠키를 쓰지 않는다
+
+
+def cookie_problem(text: str):
+    low = (text or "").lower()
+    return any(s in low for s in COOKIE_FAIL_SIGNS)
+
+
+def note_cookie_failure(text: str):
+    """쿠키 때문에 실패했으면 쿠키를 끄고 True 를 돌려준다(=다시 해볼 만하다)."""
+    global COOKIES_DISABLED
+    if not COOKIES_DISABLED and COOKIES_BROWSER and cookie_problem(text):
+        COOKIES_DISABLED = True
+        return True
+    return False
+
+
+def strip_cookie_args(cmd):
+    """이미 만들어 둔 명령에서 쿠키 관련 부분만 빼낸다."""
+    out, skip = [], False
+    for a in cmd:
+        if skip:
+            skip = False
+            continue
+        if a == "--cookies-from-browser":
+            skip = True
+            continue
+        out.append(a)
+    return out
+
+
+def run_ytdlp(cmd, **kw):
+    """yt-dlp 를 돌린다. 쿠키를 못 읽어 실패하면 쿠키 없이 한 번 더 해본다."""
+    proc = subprocess.run(cmd, **kw)
+    if proc.returncode != 0:
+        both = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        if note_cookie_failure(both):
+            return subprocess.run(strip_cookie_args(cmd), **kw)
+    return proc
+
+
 def _cookie_args():
-    return ["--cookies-from-browser", COOKIES_BROWSER] if COOKIES_BROWSER else []
+    if COOKIES_DISABLED or not COOKIES_BROWSER:
+        return []
+    return ["--cookies-from-browser", COOKIES_BROWSER]
 
 def _ffmpeg_args():
     # 포장/자동확보된 ffmpeg 위치를 yt-dlp에 알려준다 (병합에 필요)
@@ -206,14 +262,14 @@ def get_video_title(url: str):
 
     url]
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=METADATA_TIMEOUT_SEC
+        proc = run_ytdlp(
+            cmd, capture_output=True, text=True, timeout=METADATA_TIMEOUT_SEC
         )
-        title = proc.stdout.strip()
+        title = proc.stdout.strip() if proc.returncode == 0 else ""
         if not title:
             return "video"
         return truncate_filename(sanitize_filename(title))
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError):
         return "video"
 
 # =========================================================
@@ -229,8 +285,8 @@ def get_available_resolutions(url: str):
         url,
     ]
     try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, check=True, timeout=METADATA_TIMEOUT_SEC
+        proc = run_ytdlp(
+            cmd, capture_output=True, text=True, timeout=METADATA_TIMEOUT_SEC
         )
         data = json.loads(proc.stdout)
         labels = set()
@@ -246,7 +302,7 @@ def get_available_resolutions(url: str):
             elif f.get("width") and f.get("height"):
                 labels.add(min(f["width"], f["height"]))
         return sorted(labels)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
         return []
 
 # =========================================================
@@ -292,6 +348,9 @@ def analyze_output(text: str):
         logs.append("⚠️ 유튜브가 이 기기에서의 재생을 차단(UNPLAYABLE)하여 우회 경로를 사용했습니다.")
     if "po_token" in lower or "po token" in lower:
         logs.append("⚠️ 외부 인증 토큰(PO Token) 누락으로 고화질 세션이 거부되었습니다.")
+    if cookie_problem(lower):
+        logs.append("⚠️ 크롬 쿠키를 읽지 못해 쿠키 없이 받았습니다. "
+                    "로그인이 필요한 영상이면 크롬을 완전히 끄고 다시 시도하세요.")
     return list(set(logs))
 
 # =========================================================
@@ -299,7 +358,7 @@ def analyze_output(text: str):
 # =========================================================
 def download_video(url: str, folder: str, title: str):
     cmd = build_download_command(url, folder, title)
-    process = subprocess.run(cmd, capture_output=True, text=True)
+    process = run_ytdlp(cmd, capture_output=True, text=True)
     output = (process.stdout or "") + "\n" + (process.stderr or "")
     latest = find_latest_downloaded_file(folder)
     success = process.returncode == 0

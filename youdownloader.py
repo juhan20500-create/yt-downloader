@@ -6,6 +6,7 @@ import glob
 import json
 import re
 import shutil
+import sys
 import subprocess
 from fractions import Fraction
 
@@ -14,8 +15,35 @@ from fractions import Fraction
 # =========================================================
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
-# 쿠키는 선택 사항. 로그인 상태를 쓰려면 환경변수로 브라우저를 지정 (예: "chrome" 또는 "chrome:Profile 2")
-COOKIES_BROWSER = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
+def _chrome_user_data_dir():
+    if os.name == "nt":
+        return os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data")
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
+    return os.path.expanduser("~/.config/google-chrome")
+
+
+def _auto_cookies_browser():
+    """이 컴퓨터에 있는 크롬 프로필을 찾아 쿠키로 쓴다.
+
+    쿠키가 없으면 유튜브가 "봇이 아님을 확인하라"며 막거나, 샤오홍슈처럼
+    로그인이 필요한 곳에서 내용을 안 내준다.
+    프로필 이름은 사람마다 다르므로(Default, Profile 1, …) 고정하면 안 된다.
+    크롬이 없으면 빈 값을 돌려주고 쿠키 없이 진행한다.
+    """
+    want = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
+    if want:
+        return want
+    base = _chrome_user_data_dir()
+    if not os.path.isdir(base):
+        return ""
+    for name in ("Default", "Profile 1", "Profile 2", "Profile 3"):
+        if os.path.isdir(os.path.join(base, name)):
+            return f"chrome:{name}"
+    return ""
+
+
+COOKIES_BROWSER = _auto_cookies_browser()
 # yt-dlp / ffprobe 경로는 tools가 확보한다(자동 다운로드/포장 포함). 실행 시 주입됨.
 YT_DLP_PATH = os.environ.get("YT_DLP_PATH", "yt-dlp")
 FFPROBE_PATH = "ffprobe"

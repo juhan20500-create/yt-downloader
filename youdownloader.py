@@ -23,27 +23,103 @@ def _chrome_user_data_dir():
     return os.path.expanduser("~/.config/google-chrome")
 
 
+def list_chrome_profiles():
+    """이 컴퓨터의 크롬 프로필 목록. 크롬이 저장해 둔 표시 이름까지 함께 준다.
+
+    폴더 이름(Default, Profile 1 …)만 보여주면 어느 계정인지 알 수 없어서,
+    크롬의 Local State 에 있는 이름과 메일 주소를 같이 보여 준다.
+    """
+    base = _chrome_user_data_dir()
+    if not os.path.isdir(base):
+        return []
+    names = {}
+    try:
+        with open(os.path.join(base, "Local State"), encoding="utf-8") as f:
+            names = json.load(f).get("profile", {}).get("info_cache", {})
+    except (OSError, json.JSONDecodeError):
+        pass
+    out = []
+    for d in sorted(os.listdir(base)):
+        if d != "Default" and not d.startswith("Profile "):
+            continue
+        if not os.path.isdir(os.path.join(base, d, "Network")) and \
+           not os.path.exists(os.path.join(base, d, "Cookies")):
+            continue                      # 쿠키가 없는 껍데기 폴더는 뺀다
+        info = names.get(d) or {}
+        out.append({"id": d,
+                    "label": info.get("name") or d,
+                    "mail": info.get("user_name") or ""})
+    return out
+
+
+def _chrome_last_used():
+    """크롬이 마지막으로 쓴 프로필. 사람이 실제로 로그인해 쓰는 것일 확률이 높다."""
+    try:
+        with open(os.path.join(_chrome_user_data_dir(), "Local State"), encoding="utf-8") as f:
+            return json.load(f).get("profile", {}).get("last_used") or ""
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
+def settings_path():
+    import tools
+    return os.path.join(tools.data_dir(), "settings.json")
+
+
+def load_settings():
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_settings(d):
+    with open(settings_path(), "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+
+
 def _auto_cookies_browser():
-    """이 컴퓨터에 있는 크롬 프로필을 찾아 쿠키로 쓴다.
+    """쿠키로 쓸 크롬 프로필을 정한다.
 
     쿠키가 없으면 유튜브가 "봇이 아님을 확인하라"며 막거나, 샤오홍슈처럼
-    로그인이 필요한 곳에서 내용을 안 내준다.
-    프로필 이름은 사람마다 다르므로(Default, Profile 1, …) 고정하면 안 된다.
-    크롬이 없으면 빈 값을 돌려주고 쿠키 없이 진행한다.
+    로그인이 필요한 곳에서 내용을 안 내준다. 프리미엄 전용 영상도 로그인된
+    프로필이라야 본편이 받아진다. 아니면 예고편만 내려온다.
+
+    순서: 환경변수 → 화면에서 고른 값 → 크롬이 마지막에 쓴 프로필 → 첫 프로필.
+    예전에는 무조건 Default 를 골랐는데, 프로필이 여럿인 사람은 로그인 안 된
+    계정이 걸려 엉뚱한 결과를 받았다.
     """
     want = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
     if want:
         return want
-    base = _chrome_user_data_dir()
-    if not os.path.isdir(base):
+    avail = [p["id"] for p in list_chrome_profiles()]
+    if not avail:
         return ""
-    for name in ("Default", "Profile 1", "Profile 2", "Profile 3"):
-        if os.path.isdir(os.path.join(base, name)):
-            return f"chrome:{name}"
-    return ""
+    chosen = load_settings().get("chrome_profile")
+    if chosen in avail:
+        return f"chrome:{chosen}"
+    last = _chrome_last_used()
+    if last in avail:
+        return f"chrome:{last}"
+    return f"chrome:{avail[0]}"
 
 
 COOKIES_BROWSER = _auto_cookies_browser()
+
+
+def set_chrome_profile(profile_id):
+    """화면에서 고른 프로필을 저장하고 곧바로 반영한다."""
+    global COOKIES_BROWSER, COOKIES_DISABLED
+    s = load_settings()
+    if profile_id:
+        s["chrome_profile"] = profile_id
+    else:
+        s.pop("chrome_profile", None)     # 빈 값이면 자동 선택으로 되돌린다
+    save_settings(s)
+    COOKIES_DISABLED = False              # 프로필을 바꿨으니 다시 시도해 볼 만하다
+    COOKIES_BROWSER = _auto_cookies_browser()
+    return COOKIES_BROWSER
 # yt-dlp / ffprobe 경로는 tools가 확보한다(자동 다운로드/포장 포함). 실행 시 주입됨.
 YT_DLP_PATH = os.environ.get("YT_DLP_PATH", "yt-dlp")
 FFPROBE_PATH = "ffprobe"

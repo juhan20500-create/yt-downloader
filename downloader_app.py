@@ -254,6 +254,9 @@ INDEX_HTML = r"""
   button:hover{ filter:brightness(1.08); }
   button:disabled{ opacity:.5; cursor:default; box-shadow:none; }
   .hint{ color:var(--muted); font-size:12.5px; }
+  select{ background:var(--elev); color:var(--txt); border:1px solid var(--line);
+    border-radius:var(--ctrl); padding:7px 10px; font-size:13px; font-family:inherit; outline:none; }
+  select:focus{ border-color:var(--accent); }
   #jobs{ margin-top:22px; display:flex; flex-direction:column; gap:14px; }
   .job{ background:var(--panel); border:1px solid var(--line); border-radius:var(--r); padding:16px 18px; }
   .job .jtitle{ font-size:14.5px; font-weight:650; margin-bottom:4px; word-break:break-all; }
@@ -290,6 +293,11 @@ INDEX_HTML = r"""
     <div class="row">
       <button id="go">다운로드</button>
       <span class="hint" id="hint">유튜브 shorts·롱폼, 틱톡 지원</span>
+    </div>
+    <div class="row" id="profRow" style="display:none">
+      <span class="hint">크롬 계정</span>
+      <select id="prof"></select>
+      <span class="hint" id="profHint">프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아집니다</span>
     </div>
   </div>
 
@@ -398,6 +406,29 @@ urlsEl.addEventListener('keydown', e=>{
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) goBtn.click();
 });
 document.getElementById('openFolder').onclick = (e)=>{ e.preventDefault(); fetch('/open_folder',{method:'POST'}); };
+
+// 크롬 계정(프로필) 고르기.
+// 프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아진다.
+// 아니면 유튜브가 같은 주소에 예고편을 대신 내준다.
+const profRow = document.getElementById('profRow');
+const profSel = document.getElementById('prof');
+fetch('/profiles').then(r=>r.json()).then(d=>{
+  const list = d.profiles || [];
+  if(list.length < 2) return;               // 프로필이 하나뿐이면 고를 것이 없다
+  profRow.style.display = '';
+  profSel.innerHTML = list.map(p=>{
+    const name = p.mail ? `${p.label} (${p.mail})` : p.label;
+    const sel = ('chrome:'+p.id) === d.current ? ' selected' : '';
+    return `<option value="${p.id}"${sel}>${name}</option>`;
+  }).join('');
+});
+profSel.onchange = ()=>{
+  fetch('/profiles', {method:'POST', headers:{'Content-Type':'application/json'},
+                      body: JSON.stringify({profile: profSel.value})})
+    .then(r=>r.json()).then(()=>{
+      document.getElementById('profHint').textContent = '바꿨습니다. 이제 다운로드하면 이 계정으로 받습니다.';
+    });
+};
 </script>
 </body>
 </html>
@@ -432,6 +463,23 @@ def download():
                               "log": ""}, ensure_ascii=False) + "\n"
 
     return Response(gen(), mimetype="application/x-ndjson")
+
+
+@app.route("/profiles", methods=["GET", "POST"])
+def profiles_route():
+    """쿠키로 쓸 크롬 계정을 보여 주고 바꾼다.
+
+    프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아진다. 아니면 유튜브가
+    같은 주소에 예고편을 대신 내준다. 프로필이 여럿인 사람은 이걸 골라야 한다.
+    """
+    if request.method == "POST":
+        d = request.get_json() or {}
+        yd.set_chrome_profile((d.get("profile") or "").strip())
+    return jsonify({
+        "profiles": yd.list_chrome_profiles(),
+        "current": yd.COOKIES_BROWSER,
+        "locked": bool(os.environ.get("YTDLP_COOKIES_BROWSER")),
+    })
 
 
 @app.route("/open_folder", methods=["POST"])

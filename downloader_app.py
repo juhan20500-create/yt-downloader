@@ -763,9 +763,21 @@ def trim_page():
     return TRIM_HTML
 
 
+# 크롬이 접속을 막는 포트들. 여기에 걸리면 브라우저가 ERR_UNSAFE_PORT 를 낸다.
+# 서버는 멀쩡히 떠 있는데 화면만 안 열려서 원인을 찾기 어렵다.
+UNSAFE_PORTS = {
+    5060, 5061,        # SIP (인터넷 전화)
+    6000,              # X11
+    6566, 6665, 6666, 6667, 6668, 6669, 6697,   # IRC
+    10080,
+}
+
+
 def _pick_port(start):
     import socket
-    for port in range(start, start + 20):
+    for port in range(start, start + 40):
+        if port in UNSAFE_PORTS:
+            continue
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if s.connect_ex(("127.0.0.1", port)) != 0:
                 return port

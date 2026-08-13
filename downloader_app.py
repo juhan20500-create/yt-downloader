@@ -73,8 +73,18 @@ def open_browser(url):
 
 
 def _default_download_dir():
-    """사용자 홈의 'Downloads/다운받은 영상'에 저장 (없으면 홈 아래)."""
+    """영상을 저장할 폴더.
+
+    홈에 '다운받은 영상' 폴더가 이미 있으면 그쪽에 계속 넣는다.
+    예전 판이 홈에 만들어 둔 폴더가 있는데도 Downloads 아래에 새로 만들면,
+    같은 이름의 폴더가 두 개가 되어 받은 영상이 갈라진다.
+
+    그런 폴더가 없는 사람(처음 쓰는 경우)은 Downloads 아래에 만든다.
+    """
     home = os.path.expanduser("~")
+    old = os.path.join(home, yd.DOWNLOAD_DIR_NAME)
+    if os.path.isdir(old):
+        return old
     dl = os.path.join(home, "Downloads")
     base = dl if os.path.isdir(dl) else home
     return os.path.join(base, yd.DOWNLOAD_DIR_NAME)

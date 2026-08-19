@@ -14,53 +14,100 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
-APP_VERSION = "1.18"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
+APP_VERSION = "1.19"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
-def _chrome_user_data_dir():
+BROWSER_NAMES = {"chrome": "크롬", "edge": "엣지", "whale": "웨일", "brave": "브레이브",
+                 "vivaldi": "비발디", "opera": "오페라", "firefox": "파이어폭스"}
+
+
+def _browser_bases():
+    """쿠키를 읽어올 수 있는 크로미움 계열 브라우저들의 폴더.
+
+    예전에는 크롬만 봤는데, 크롬을 안 쓰는 사람은 쿠키를 아예 못 가져와
+    로그인이 필요한 영상에서 403 으로 막혔다. 앞에 있는 것부터 고른다.
+    """
     if os.name == "nt":
-        return os.path.join(os.environ.get("LOCALAPPDATA", ""), "Google", "Chrome", "User Data")
+        la = os.environ.get("LOCALAPPDATA", "")
+        ad = os.environ.get("APPDATA", "")
+        return [("chrome",  os.path.join(la, "Google", "Chrome", "User Data")),
+                ("edge",    os.path.join(la, "Microsoft", "Edge", "User Data")),
+                ("whale",   os.path.join(la, "Naver", "Naver Whale", "User Data")),
+                ("brave",   os.path.join(la, "BraveSoftware", "Brave-Browser", "User Data")),
+                ("vivaldi", os.path.join(la, "Vivaldi", "User Data")),
+                ("opera",   os.path.join(ad, "Opera Software", "Opera Stable"))]
     if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Application Support/Google/Chrome")
-    return os.path.expanduser("~/.config/google-chrome")
+        s = os.path.expanduser("~/Library/Application Support")
+        return [("chrome",  os.path.join(s, "Google", "Chrome")),
+                ("edge",    os.path.join(s, "Microsoft Edge")),
+                ("whale",   os.path.join(s, "Naver", "Whale")),
+                ("brave",   os.path.join(s, "BraveSoftware", "Brave-Browser")),
+                ("vivaldi", os.path.join(s, "Vivaldi")),
+                ("opera",   os.path.join(s, "com.operasoftware.Opera"))]
+    c = os.path.expanduser("~/.config")
+    return [("chrome",  os.path.join(c, "google-chrome")),
+            ("edge",    os.path.join(c, "microsoft-edge")),
+            ("brave",   os.path.join(c, "BraveSoftware", "Brave-Browser")),
+            ("vivaldi", os.path.join(c, "vivaldi")),
+            ("opera",   os.path.join(c, "opera"))]
 
 
-def list_chrome_profiles():
-    """이 컴퓨터의 크롬 프로필 목록. 크롬이 저장해 둔 표시 이름까지 함께 준다.
+def _firefox_dir():
+    if os.name == "nt":
+        return os.path.join(os.environ.get("APPDATA", ""), "Mozilla", "Firefox")
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/Firefox")
+    return os.path.expanduser("~/.mozilla/firefox")
+
+
+def _has_cookies(d):
+    return os.path.isdir(os.path.join(d, "Network")) or os.path.exists(os.path.join(d, "Cookies"))
+
+
+def _profiles_in(browser, base):
+    """브라우저 폴더 하나 안의 프로필 목록.
 
     폴더 이름(Default, Profile 1 …)만 보여주면 어느 계정인지 알 수 없어서,
-    크롬의 Local State 에 있는 이름과 메일 주소를 같이 보여 준다.
+    브라우저가 Local State 에 적어 둔 이름과 메일 주소를 같이 보여 준다.
     """
-    base = _chrome_user_data_dir()
     if not os.path.isdir(base):
         return []
-    names = {}
+    names, last = {}, ""
     try:
         with open(os.path.join(base, "Local State"), encoding="utf-8") as f:
-            names = json.load(f).get("profile", {}).get("info_cache", {})
+            prof = json.load(f).get("profile", {})
+        names = prof.get("info_cache", {})
+        last = prof.get("last_used") or ""
     except (OSError, json.JSONDecodeError):
         pass
+    nice = BROWSER_NAMES.get(browser, browser)
     out = []
     for d in sorted(os.listdir(base)):
         if d != "Default" and not d.startswith("Profile "):
             continue
-        if not os.path.isdir(os.path.join(base, d, "Network")) and \
-           not os.path.exists(os.path.join(base, d, "Cookies")):
+        if not _has_cookies(os.path.join(base, d)):
             continue                      # 쿠키가 없는 껍데기 폴더는 뺀다
         info = names.get(d) or {}
-        out.append({"id": d,
-                    "label": info.get("name") or d,
-                    "mail": info.get("user_name") or ""})
+        out.append({"id": f"{browser}:{d}",
+                    "label": f"{nice} — {info.get('name') or d}",
+                    "mail": info.get("user_name") or "",
+                    "last": d == last})
+    if not out and _has_cookies(base):
+        # 오페라처럼 프로필 폴더를 따로 두지 않는 브라우저
+        out.append({"id": browser, "label": nice, "mail": "", "last": True})
     return out
 
 
-def _chrome_last_used():
-    """크롬이 마지막으로 쓴 프로필. 사람이 실제로 로그인해 쓰는 것일 확률이 높다."""
-    try:
-        with open(os.path.join(_chrome_user_data_dir(), "Local State"), encoding="utf-8") as f:
-            return json.load(f).get("profile", {}).get("last_used") or ""
-    except (OSError, json.JSONDecodeError):
-        return ""
+def list_chrome_profiles():
+    """이 컴퓨터에서 쿠키를 가져올 수 있는 브라우저·계정 전부."""
+    out = []
+    for browser, base in _browser_bases():
+        out.extend(_profiles_in(browser, base))
+    if os.path.isdir(_firefox_dir()):
+        # 파이어폭스는 구조가 달라 프로필을 세지 않는다. yt-dlp 가 알아서 찾는다.
+        out.append({"id": "firefox", "label": BROWSER_NAMES["firefox"],
+                    "mail": "", "last": True})
+    return out
 
 
 def settings_path():
@@ -88,23 +135,26 @@ def _auto_cookies_browser():
     로그인이 필요한 곳에서 내용을 안 내준다. 프리미엄 전용 영상도 로그인된
     프로필이라야 본편이 받아진다. 아니면 예고편만 내려온다.
 
-    순서: 환경변수 → 화면에서 고른 값 → 크롬이 마지막에 쓴 프로필 → 첫 프로필.
-    예전에는 무조건 Default 를 골랐는데, 프로필이 여럿인 사람은 로그인 안 된
-    계정이 걸려 엉뚱한 결과를 받았다.
+    순서: 환경변수 → 화면에서 고른 값 → 그 브라우저가 마지막에 쓴 프로필 → 첫 번째.
+    예전에는 무조건 크롬 Default 를 골랐는데, 프로필이 여럿인 사람은 로그인 안 된
+    계정이 걸려 엉뚱한 결과를 받았고, 크롬을 안 쓰는 사람은 아예 쿠키가 없었다.
     """
     want = os.environ.get("YTDLP_COOKIES_BROWSER", "").strip()
     if want:
         return want
-    avail = [p["id"] for p in list_chrome_profiles()]
+    avail = list_chrome_profiles()
     if not avail:
         return ""
+    ids = [p["id"] for p in avail]
     chosen = load_settings().get("chrome_profile")
-    if chosen in avail:
-        return f"chrome:{chosen}"
-    last = _chrome_last_used()
-    if last in avail:
-        return f"chrome:{last}"
-    return f"chrome:{avail[0]}"
+    if chosen and chosen not in ids and f"chrome:{chosen}" in ids:
+        chosen = f"chrome:{chosen}"        # 브라우저 이름 없이 저장하던 시절 값
+    if chosen in ids:
+        return chosen
+    for p in avail:
+        if p["last"]:
+            return p["id"]
+    return ids[0]
 
 
 COOKIES_BROWSER = _auto_cookies_browser()
@@ -284,14 +334,14 @@ def cookie_mode_label():
 
     403 신고를 받았을 때 이 사람이 새 방식으로 받고 있는지 알아야 한다.
     """
-    if COOKIES_DISABLED:
-        return "쿠키 없음"
-    if COOKIES_BROWSER and not COOKIES_FROM_BROWSER_FAILED:
-        return f"크롬에서 직접 ({COOKIES_BROWSER})"
+    if not COOKIES_BROWSER:
+        return "브라우저를 못 찾음 (크롬·엣지·웨일·브레이브·파이어폭스)"
+    if not COOKIES_FROM_BROWSER_FAILED and not COOKIES_DISABLED:
+        return f"브라우저에서 직접 ({COOKIES_BROWSER})"
     path = cookie_file_path()
-    if os.path.exists(path) and os.path.getsize(path) > 0:
-        return "뽑아 둔 쿠키 파일"
-    return "쿠키 없음"
+    if not COOKIES_DISABLED and os.path.exists(path) and os.path.getsize(path) > 0:
+        return f"뽑아 둔 쿠키 파일 ({COOKIES_BROWSER} 를 못 읽음)"
+    return f"{COOKIES_BROWSER} 를 못 읽어 쿠키 없이 받음 — 브라우저를 완전히 끄고 다시 시도하세요"
 
 
 def _ffmpeg_args():

@@ -197,7 +197,7 @@ def download_stream(url, audio_only=False):
     cmd = build_streaming_command(url, folder, title, audio_only)
     max_tries = 5 if yd.is_tiktok(url) else 2
     started_at = time.time() - 1  # 이번 실행에서 새로 생긴 파일만 성공으로 인정
-    saved, output = None, ""
+    saved, output, all_output = None, "", []
     attempt = 0
     while attempt < max_tries:
         attempt += 1
@@ -216,6 +216,9 @@ def download_stream(url, audio_only=False):
                 log_lines.append(line)
         proc.wait()
         output = "\n".join(log_lines)
+        # 시도할 때마다 덮어쓰면 앞 시도의 실패 이유가 사라진다. 쿠키를 못 읽어
+        # 물러섰다는 사실이 안 보여서, 원인이 엉뚱하게 읽힌다. 전부 모아 둔다.
+        all_output.append(output)
         cand = find_latest_audio(folder) if audio_only else yd.find_latest_downloaded_file(folder)
         # 이번 시도에서 실제로 생성/갱신된 파일만 인정 (이전 다운로드 오탐 방지)
         if proc.returncode == 0 and cand and os.path.getmtime(cand) >= started_at:
@@ -238,11 +241,12 @@ def download_stream(url, audio_only=False):
             time.sleep(2)
 
     if not saved:
-        hints = yd.analyze_output(output) or ["여러 번 시도했지만 실패 (틱톡 접속 제한일 수 있음 — 잠시 후 재시도)"]
+        full = "\n".join(all_output)
+        hints = yd.analyze_output(full) or ["여러 번 시도했지만 실패 (틱톡 접속 제한일 수 있음 — 잠시 후 재시도)"]
         # 어떤 버전으로 어떻게 받았는지 함께 알린다. 403 신고를 받았을 때
         # 프로그램이 오래된 것인지 영상 문제인지 이것만 보면 갈린다.
         hints.append(f"프로그램 v{yd.APP_VERSION} · 쿠키: {yd.cookie_mode_label()}")
-        yield {"stage": "error", "hints": hints, "log": output.strip()[-2000:]}
+        yield {"stage": "error", "hints": hints, "log": full.strip()[-4000:]}
         return
 
     # mp3 는 "이미 받은 영상" 목록에 넣지 않는다. 나중에 영상으로 받을 수 있어야 한다.
@@ -348,7 +352,7 @@ INDEX_HTML = r"""
       <span class="hint" id="hint">유튜브 shorts·롱폼, 틱톡 지원</span>
     </div>
     <div class="row" id="profRow" style="display:none">
-      <span class="hint">크롬 계정</span>
+      <span class="hint">브라우저 계정</span>
       <select id="prof"></select>
       <span class="hint" id="profHint">프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아집니다</span>
     </div>
@@ -478,18 +482,23 @@ document.getElementById('quitApp').onclick = async (e)=>{
     + '종료했습니다. 이 창은 닫으셔도 됩니다.</div>';
 };
 
-// 크롬 계정(프로필) 고르기.
+// 브라우저 계정(프로필) 고르기.
 // 프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아진다.
 // 아니면 유튜브가 같은 주소에 예고편을 대신 내준다.
 const profRow = document.getElementById('profRow');
 const profSel = document.getElementById('prof');
 fetch('/profiles').then(r=>r.json()).then(d=>{
   const list = d.profiles || [];
-  if(list.length < 2) return;               // 프로필이 하나뿐이면 고를 것이 없다
   profRow.style.display = '';
+  if(!list.length){                         // 브라우저를 하나도 못 찾은 경우
+    profSel.style.display = 'none';
+    document.getElementById('profHint').textContent =
+      '쿠키를 가져올 브라우저를 찾지 못했습니다. 크롬·엣지·웨일·브레이브·파이어폭스 중 하나로 유튜브에 로그인해 두세요.';
+    return;
+  }
   profSel.innerHTML = list.map(p=>{
     const name = p.mail ? `${p.label} (${p.mail})` : p.label;
-    const sel = ('chrome:'+p.id) === d.current ? ' selected' : '';
+    const sel = p.id === d.current ? ' selected' : '';
     return `<option value="${p.id}"${sel}>${name}</option>`;
   }).join('');
 });

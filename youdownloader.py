@@ -164,7 +164,8 @@ COOKIE_FAIL_SIGNS = (
     "cookies from browser",
 )
 
-COOKIES_DISABLED = False   # 한 번 실패하면 이번 실행 내내 쿠키를 쓰지 않는다
+COOKIES_FROM_BROWSER_FAILED = False  # 브라우저에서 직접 못 읽어 파일로 넘어간 상태
+COOKIES_DISABLED = False             # 그마저 안 되어 쿠키를 아예 안 쓰는 상태
 
 
 def cookie_problem(text: str):
@@ -173,12 +174,18 @@ def cookie_problem(text: str):
 
 
 def note_cookie_failure(text: str):
-    """쿠키 때문에 실패했으면 쿠키를 끄고 True 를 돌려준다(=다시 해볼 만하다)."""
-    global COOKIES_DISABLED
-    if not COOKIES_DISABLED and COOKIES_BROWSER and cookie_problem(text):
-        COOKIES_DISABLED = True
+    """쿠키 때문에 실패했으면 한 단계 물러서고 True 를 돌려준다(=다시 해볼 만하다).
+
+    브라우저에서 직접 읽기 → 뽑아 둔 파일 → 쿠키 없음 순으로 내려간다.
+    """
+    global COOKIES_FROM_BROWSER_FAILED, COOKIES_DISABLED
+    if COOKIES_DISABLED or not COOKIES_BROWSER or not cookie_problem(text):
+        return False
+    if not COOKIES_FROM_BROWSER_FAILED:
+        COOKIES_FROM_BROWSER_FAILED = True
         return True
-    return False
+    COOKIES_DISABLED = True
+    return True
 
 
 def strip_cookie_args(cmd):
@@ -195,13 +202,20 @@ def strip_cookie_args(cmd):
     return out
 
 
+def reset_cookie_args(cmd):
+    """명령에서 쿠키 부분을 떼고, 지금 상태에 맞는 쿠키 방식으로 다시 붙인다."""
+    out = strip_cookie_args(cmd)
+    return out[:1] + _cookie_args() + out[1:]
+
+
 def run_ytdlp(cmd, **kw):
-    """yt-dlp 를 돌린다. 쿠키를 못 읽어 실패하면 쿠키 없이 한 번 더 해본다."""
+    """yt-dlp 를 돌린다. 쿠키를 못 읽어 실패하면 한 단계 물러서서 다시 해본다."""
     proc = subprocess.run(cmd, **kw)
-    if proc.returncode != 0:
+    while proc.returncode != 0:
         both = (proc.stdout or "") + "\n" + (proc.stderr or "")
-        if note_cookie_failure(both):
-            return subprocess.run(strip_cookie_args(cmd), **kw)
+        if not note_cookie_failure(both):
+            break
+        proc = subprocess.run(reset_cookie_args(cmd), **kw)
     return proc
 
 
@@ -245,16 +259,24 @@ def export_cookies(max_age_days=3):
 
 
 def _cookie_args():
+    """쿠키를 어디서 가져올지 정한다.
+
+    브라우저에서 직접 읽는 것이 가장 잘 된다. 그때그때 살아 있는 값을
+    가져오기 때문이다. 파일로 뽑아 두면 일부 값이 굳어서, 유튜브가
+    로그인 확인을 요구하는 영상에서 403 으로 막히는 일이 생긴다.
+
+    그래서 브라우저에서 직접 읽기를 먼저 쓰고, 그게 실패했을 때만
+    (윈도우에서 크롬이 켜져 있어 쿠키 파일이 잠긴 경우) 뽑아 둔 파일로
+    넘어간다. 아예 못 받는 것보다는 낫기 때문이다.
+    """
     if COOKIES_DISABLED:
         return []
-    # 뽑아 둔 파일이 있으면 그것을 먼저 쓴다. 크롬이 켜져 있어도 되고,
-    # 쿠키가 살아 있으니 로그인이 필요한 영상도 받아진다.
+    if COOKIES_BROWSER and not COOKIES_FROM_BROWSER_FAILED:
+        return ["--cookies-from-browser", COOKIES_BROWSER]
     path = cookie_file_path()
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return ["--cookies", path]
-    if not COOKIES_BROWSER:
-        return []
-    return ["--cookies-from-browser", COOKIES_BROWSER]
+    return []
 
 def _ffmpeg_args():
     # 포장/자동확보된 ffmpeg 위치를 yt-dlp에 알려준다 (병합에 필요)

@@ -199,6 +199,7 @@ def download_stream(url, audio_only=False):
     started_at = time.time() - 1  # 이번 실행에서 새로 생긴 파일만 성공으로 인정
     saved, output = None, ""
     attempt = 0
+    cookies_refreshed = False
     while attempt < max_tries:
         attempt += 1
         proc = subprocess.Popen(
@@ -226,6 +227,17 @@ def download_stream(url, audio_only=False):
         # 영상 문제가 아니므로 쿠키를 빼고 곧바로 다시 해본다.
         # 쿠키 문제는 영상 잘못이 아니므로 시도 횟수로 치지 않는다.
         # note_cookie_failure 는 한 번만 True 라 무한히 돌지 않는다.
+        # 유튜브가 로그인한 사람에게만 내주는 영상이 있다. 쿠키가 없거나
+        # 낡으면 주소는 나오는데 파일을 받을 때 403 으로 막힌다.
+        # 쿠키를 새로 뽑아 한 번 더 해본다. 영상 잘못이 아니므로 횟수로 치지 않는다.
+        if "403" in output and not cookies_refreshed:
+            cookies_refreshed = True
+            yield {"stage": "progress", "percent": "",
+                   "speed": "유튜브가 막아 쿠키를 새로 받는 중…", "eta": ""}
+            if yd.export_cookies(max_age_days=0):
+                cmd = build_streaming_command(url, folder, title, audio_only)
+                attempt -= 1
+                continue
         if yd.note_cookie_failure(output):
             cmd = yd.strip_cookie_args(cmd)
             attempt -= 1
@@ -853,6 +865,10 @@ if __name__ == "__main__":
         yd.FFMPEG_PATH = tools.ffmpeg_path()
         yd.FFPROBE_PATH = tools.ffprobe_path()
         Thread(target=tools.update_ytdlp_bg, args=(yd.YT_DLP_PATH,), daemon=True).start()
+        # 크롬 쿠키를 파일로 뽑아 둔다. 유튜브가 로그인한 사람에게만 내주는
+        # 영상이 있어서, 쿠키 없이 받으면 403 으로 막힌다. 크롬이 켜져 있으면
+        # 쿠키 파일이 잠기므로, 읽을 수 있을 때 미리 뽑아 두고 그것을 쓴다.
+        Thread(target=yd.export_cookies, daemon=True).start()
     except Exception as e:
         print(f"[오류] 도구 준비 실패: {e}\n인터넷 연결을 확인하고 다시 실행하세요.")
     port = _pick_port(PORT)

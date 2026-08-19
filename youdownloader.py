@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import subprocess
+import time
 from fractions import Fraction
 
 # =========================================================
@@ -118,6 +119,10 @@ def set_chrome_profile(profile_id):
         s.pop("chrome_profile", None)     # 빈 값이면 자동 선택으로 되돌린다
     save_settings(s)
     COOKIES_DISABLED = False              # 프로필을 바꿨으니 다시 시도해 볼 만하다
+    try:                                  # 뽑아둔 쿠키는 옛 계정 것이라 버린다
+        os.remove(cookie_file_path())
+    except OSError:
+        pass
     COOKIES_BROWSER = _auto_cookies_browser()
     return COOKIES_BROWSER
 # yt-dlp / ffprobe 경로는 tools가 확보한다(자동 다운로드/포장 포함). 실행 시 주입됨.
@@ -183,7 +188,7 @@ def strip_cookie_args(cmd):
         if skip:
             skip = False
             continue
-        if a == "--cookies-from-browser":
+        if a in ("--cookies-from-browser", "--cookies"):
             skip = True
             continue
         out.append(a)
@@ -200,8 +205,54 @@ def run_ytdlp(cmd, **kw):
     return proc
 
 
+def cookie_file_path():
+    """뽑아둔 쿠키를 보관할 파일 위치."""
+    import tools
+    return os.path.join(tools.data_dir(), "cookies.txt")
+
+
+def export_cookies(max_age_days=3):
+    """크롬 쿠키를 파일로 한 번 뽑아 둔다.
+
+    유튜브는 일부 영상을 로그인한 사람에게만 내준다. 쿠키 없이 받으면
+    주소까지는 나오는데 정작 파일을 받을 때 403 으로 막힌다.
+
+    그런데 크롬이 켜져 있으면 쿠키 파일이 잠겨 브라우저에서 직접 읽지
+    못한다(윈도우에서는 거의 항상 그렇다). 그래서 읽을 수 있을 때 파일로
+    뽑아 두고, 그다음부터는 그 파일을 쓴다. 크롬을 켜 두어도 상관없어진다.
+
+    실패해도 조용히 넘어간다. 이미 뽑아 둔 파일이 있으면 그것을 계속 쓴다.
+    """
+    if not COOKIES_BROWSER:
+        return None
+    path = cookie_file_path()
+    if os.path.exists(path):
+        age = (time.time() - os.path.getmtime(path)) / 86400
+        if age < max_age_days:
+            return path                      # 아직 쓸 만하다
+    try:
+        proc = subprocess.run(
+            [YT_DLP_PATH, "--cookies-from-browser", COOKIES_BROWSER,
+             "--cookies", path, "--skip-download", "--simulate",
+             "https://www.youtube.com/watch?v=BaW_jenozKc"],
+            capture_output=True, text=True, timeout=90,
+        )
+        if proc.returncode == 0 and os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return path if os.path.exists(path) else None
+
+
 def _cookie_args():
-    if COOKIES_DISABLED or not COOKIES_BROWSER:
+    if COOKIES_DISABLED:
+        return []
+    # 뽑아 둔 파일이 있으면 그것을 먼저 쓴다. 크롬이 켜져 있어도 되고,
+    # 쿠키가 살아 있으니 로그인이 필요한 영상도 받아진다.
+    path = cookie_file_path()
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return ["--cookies", path]
+    if not COOKIES_BROWSER:
         return []
     return ["--cookies-from-browser", COOKIES_BROWSER]
 
@@ -422,6 +473,9 @@ def analyze_output(text: str):
         logs.append("⚠️ nsig 서명 제한이 작동하여 특정 포맷 매칭이 방해받았습니다.")
     if "unplayable" in lower:
         logs.append("⚠️ 유튜브가 이 기기에서의 재생을 차단(UNPLAYABLE)하여 우회 경로를 사용했습니다.")
+    if "403" in lower and "forbidden" in lower:
+        logs.append("⚠️ 유튜브가 접근을 거부했습니다(403). 로그인이 필요한 영상일 수 있습니다 — "
+                    "크롬에서 그 영상이 보이는 계정으로 로그인한 뒤, 아래에서 계정을 골라 다시 시도하세요.")
     if "po_token" in lower or "po token" in lower:
         logs.append("⚠️ 외부 인증 토큰(PO Token) 누락으로 고화질 세션이 거부되었습니다.")
     if cookie_problem(lower):

@@ -198,6 +198,7 @@ def download_stream(url, audio_only=False):
     max_tries = 5 if yd.is_tiktok(url) else 2
     started_at = time.time() - 1  # 이번 실행에서 새로 생긴 파일만 성공으로 인정
     saved, output, all_output = None, "", []
+    fallback = 0                  # 403 이 났을 때 바꿔 볼 접속 방식 차례
     attempt = 0
     while attempt < max_tries:
         attempt += 1
@@ -233,7 +234,17 @@ def download_stream(url, audio_only=False):
             cmd = yd.reset_cookie_args(cmd)
             attempt -= 1
             yield {"stage": "progress", "percent": "",
-                   "speed": "크롬 쿠키를 읽지 못해 다른 방법으로 다시 시도…", "eta": ""}
+                   "speed": "브라우저 쿠키를 읽지 못해 다른 방법으로 다시 시도…", "eta": ""}
+            continue
+        # 유튜브가 로그인 확인을 요구해 막는 경우(403). 쿠키를 구하는 대신
+        # 로그인이 필요 없는 경로로 돌아간다. 브라우저를 끄지 않아도 된다.
+        # 영상 잘못이 아니므로 시도 횟수로 치지 않는다.
+        if "403" in output and not yd.is_tiktok(url) and fallback < len(yd.FALLBACK_CLIENTS):
+            cmd = yd.use_player_client(cmd, yd.FALLBACK_CLIENTS[fallback])
+            fallback += 1
+            attempt -= 1
+            yield {"stage": "progress", "percent": "",
+                   "speed": "유튜브가 막아 다른 경로로 다시 시도…", "eta": ""}
             continue
         if attempt < max_tries:
             yield {"stage": "progress", "percent": "",

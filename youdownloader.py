@@ -14,7 +14,7 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
-APP_VERSION = "1.19"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
+APP_VERSION = "1.20"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
 BROWSER_NAMES = {"chrome": "크롬", "edge": "엣지", "whale": "웨일", "brave": "브레이브",
@@ -251,6 +251,31 @@ def strip_cookie_args(cmd):
             continue
         out.append(a)
     return out
+
+
+# 403 이 났을 때 차례로 바꿔 볼 접속 방식.
+# web_embedded 는 쿠키 없이도 원래 화질 그대로 받아진다(1080p·4K 확인).
+# android 는 360p 밖에 안 나오지만, 아무것도 못 받는 것보다는 낫다.
+FALLBACK_CLIENTS = ("web_embedded", "android")
+
+
+def use_player_client(cmd, client):
+    """접속 방식을 바꾸고 쿠키를 뺀다. 403 을 우회하려는 것이다.
+
+    유튜브가 로그인 확인을 요구해 막을 때, 쿠키를 새로 구하는 대신
+    로그인이 필요 없는 경로로 돌아간다. 크롬을 끄지 않아도 된다.
+    """
+    out, skip = [], False
+    for a in cmd:
+        if skip:
+            skip = False
+            continue
+        if a == "--extractor-args":
+            skip = True
+            continue
+        out.append(a)
+    out = strip_cookie_args(out)
+    return out[:1] + ["--extractor-args", f"youtube:player_client={client}"] + out[1:]
 
 
 def reset_cookie_args(cmd):

@@ -366,7 +366,8 @@ INDEX_HTML = r"""
 
   <div id="jobs"></div>
 
-  <div class="foot">저장 위치: <a href="#" id="openFolder">다운받은 영상</a> 폴더</div>
+  <div class="foot">저장 위치: <a href="#" id="openFolder">다운받은 영상</a> 폴더
+    · <a href="#" id="quitApp">프로그램 종료</a></div>
  </div>
 
 <script>
@@ -479,6 +480,13 @@ urlsEl.addEventListener('keydown', e=>{
   if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) goBtn.click();
 });
 document.getElementById('openFolder').onclick = (e)=>{ e.preventDefault(); fetch('/open_folder',{method:'POST'}); };
+document.getElementById('quitApp').onclick = async (e)=>{
+  e.preventDefault();
+  if(!confirm('프로그램을 종료할까요? 받는 중인 영상이 있으면 중단됩니다.')) return;
+  try{ await fetch('/quit',{method:'POST'}); }catch(_){}
+  document.body.innerHTML = '<div style="padding:60px;text-align:center;color:#949aa6">'
+    + '종료했습니다. 이 창은 닫으셔도 됩니다.</div>';
+};
 
 // 크롬 계정(프로필) 고르기.
 // 프리미엄 전용 영상은 로그인된 계정이라야 본편이 받아진다.
@@ -554,6 +562,21 @@ def profiles_route():
         "current": yd.COOKIES_BROWSER,
         "locked": bool(os.environ.get("YTDLP_COOKIES_BROWSER")),
     })
+
+
+@app.route("/quit", methods=["POST"])
+def quit_app():
+    """프로그램을 끈다.
+
+    윈도우에서는 검은 창 없이 도는데, 그러면 Ctrl+C 로 끌 수가 없다.
+    작업 관리자를 열지 않고도 여기서 끄도록 한다.
+    """
+    def stop():
+        import time as _t
+        _t.sleep(0.4)          # 응답을 먼저 보내고 끈다
+        os._exit(0)
+    Thread(target=stop, daemon=True).start()
+    return jsonify({"ok": True})
 
 
 @app.route("/open_folder", methods=["POST"])
@@ -858,7 +881,27 @@ def _pick_port(start):
     return start
 
 
+def _start_logging():
+    """검은 창이 없으면 오류를 볼 데가 없다. 파일로 남긴다.
+
+    윈도우는 창 없이 돌기 때문에(--noconsole) 화면에 아무것도 안 뜬다.
+    문제가 생겼을 때 이 파일을 보면 된다.
+    """
+    try:
+        path = os.path.join(tools.data_dir(), "app.log")
+        if os.path.exists(path) and os.path.getsize(path) > 2_000_000:
+            os.replace(path, path + ".old")     # 너무 커지면 한 번만 넘겨 둔다
+        f = open(path, "a", buffering=1, encoding="utf-8", errors="replace")
+        sys.stdout = sys.stderr = f
+        import datetime
+        print(f"\n===== 시작 {datetime.datetime.now():%Y-%m-%d %H:%M:%S} =====")
+        return path
+    except OSError:
+        return None
+
+
 if __name__ == "__main__":
+    log_path = _start_logging()
     # yt-dlp / ffmpeg 경로를 확보해 다운로드 로직에 주입
     try:
         yd.YT_DLP_PATH = tools.ensure_ytdlp()

@@ -14,7 +14,7 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
-APP_VERSION = "1.17"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
+APP_VERSION = "1.18"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
 def _chrome_user_data_dir():

@@ -14,6 +14,7 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
+APP_VERSION = "1.17"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
 def _chrome_user_data_dir():
@@ -277,6 +278,21 @@ def _cookie_args():
     if os.path.exists(path) and os.path.getsize(path) > 0:
         return ["--cookies", path]
     return []
+
+def cookie_mode_label():
+    """지금 쿠키를 어떤 방식으로 쓰고 있는지 사람이 읽을 수 있게.
+
+    403 신고를 받았을 때 이 사람이 새 방식으로 받고 있는지 알아야 한다.
+    """
+    if COOKIES_DISABLED:
+        return "쿠키 없음"
+    if COOKIES_BROWSER and not COOKIES_FROM_BROWSER_FAILED:
+        return f"크롬에서 직접 ({COOKIES_BROWSER})"
+    path = cookie_file_path()
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return "뽑아 둔 쿠키 파일"
+    return "쿠키 없음"
+
 
 def _ffmpeg_args():
     # 포장/자동확보된 ffmpeg 위치를 yt-dlp에 알려준다 (병합에 필요)

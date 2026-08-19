@@ -238,9 +238,11 @@ def download_stream(url, audio_only=False):
             time.sleep(2)
 
     if not saved:
-        yield {"stage": "error",
-               "hints": yd.analyze_output(output) or ["여러 번 시도했지만 실패 (틱톡 접속 제한일 수 있음 — 잠시 후 재시도)"],
-               "log": output.strip()[-2000:]}
+        hints = yd.analyze_output(output) or ["여러 번 시도했지만 실패 (틱톡 접속 제한일 수 있음 — 잠시 후 재시도)"]
+        # 어떤 버전으로 어떻게 받았는지 함께 알린다. 403 신고를 받았을 때
+        # 프로그램이 오래된 것인지 영상 문제인지 이것만 보면 갈린다.
+        hints.append(f"프로그램 v{yd.APP_VERSION} · 쿠키: {yd.cookie_mode_label()}")
+        yield {"stage": "error", "hints": hints, "log": output.strip()[-2000:]}
         return
 
     # mp3 는 "이미 받은 영상" 목록에 넣지 않는다. 나중에 영상으로 받을 수 있어야 한다.

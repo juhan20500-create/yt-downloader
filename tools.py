@@ -105,6 +105,17 @@ def ffprobe_path():
     return _ensure_from("ffprobe")
 
 
+def _has_impersonation(path):
+    """이 yt-dlp 가 브라우저 흉내를 낼 수 있는지. 틱톡에 꼭 필요하다."""
+    try:
+        proc = subprocess.run([path, "--list-impersonate-targets"],
+                              capture_output=True, text=True, timeout=30)
+        return any("unavailable" not in ln and "curl_cffi" in ln
+                   for ln in (proc.stdout or "").splitlines())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def ensure_ytdlp():
     if os.environ.get("YT_DLP_PATH"):
         return os.environ["YT_DLP_PATH"]
@@ -114,16 +125,20 @@ def ensure_ytdlp():
         if os.path.exists(p):
             _mark_exec(p)
             return p
-    # 2) 컴퓨터에 설치된 것
-    found = shutil.which("yt-dlp")
-    if found:
-        return found
-    # 3) 이미 받아둔 것
     name = ("yt-dlp.exe" if sys.platform == "win32"
             else "yt-dlp_macos" if sys.platform == "darwin" else "yt-dlp")
     local = os.path.join(data_dir(), name)
+    # 2) 컴퓨터에 설치된 것. 단 브라우저 흉내를 못 내면 틱톡이 통째로 안 되므로,
+    #    그럴 때는 그 기능이 들어 있는 단독 실행본을 대신 쓴다.
+    #    (홈브루로 깐 yt-dlp 에는 curl_cffi 가 빠져 있다)
+    found = shutil.which("yt-dlp")
+    if found and _has_impersonation(found):
+        return found
+    # 3) 이미 받아둔 것
     if os.path.exists(local):
         return local
+    if found:
+        print("설치된 yt-dlp 는 틱톡을 받지 못해, 기능이 들어 있는 것을 내려받습니다.")
     # 4) 마지막으로 내려받기 (백신이나 네트워크가 막으면 여기서 실패한다)
     print("yt-dlp를 처음 한 번 내려받는 중… (약 30MB)")
     url = f"https://github.com/yt-dlp/yt-dlp/releases/latest/download/{name}"

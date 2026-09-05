@@ -14,7 +14,7 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
-APP_VERSION = "1.20"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
+APP_VERSION = "1.21"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
 BROWSER_NAMES = {"chrome": "크롬", "edge": "엣지", "whale": "웨일", "brave": "브레이브",
@@ -373,15 +373,36 @@ def _ffmpeg_args():
     # 포장/자동확보된 ffmpeg 위치를 yt-dlp에 알려준다 (병합에 필요)
     return ["--ffmpeg-location", FFMPEG_PATH] if FFMPEG_PATH and FFMPEG_PATH != "ffmpeg" else []
 
+_CAN_IMPERSONATE = None
+
+
+def can_impersonate():
+    """이 yt-dlp 가 브라우저 흉내(impersonation)를 낼 수 있는지.
+
+    홈브루로 깐 yt-dlp 에는 curl_cffi 가 빠져 있어 이 기능이 없다.
+    그런데도 --impersonate 를 주면 프로그램이 통째로 죽는다. 미리 확인한다.
+    """
+    global _CAN_IMPERSONATE
+    if _CAN_IMPERSONATE is None:
+        try:
+            proc = subprocess.run([YT_DLP_PATH, "--list-impersonate-targets"],
+                                  capture_output=True, text=True, timeout=30)
+            out = proc.stdout or ""
+            _CAN_IMPERSONATE = any("unavailable" not in line and "curl_cffi" in line
+                                   for line in out.splitlines())
+        except (OSError, subprocess.SubprocessError):
+            _CAN_IMPERSONATE = False
+    return _CAN_IMPERSONATE
+
+
 def get_common_ytdlp_args(url: str):
     if is_tiktok(url):
-        # 틱톡: 브라우저 impersonation 필수 (없으면 페이지 파싱 실패)
-        return [
-            *_cookie_args(),
-            *_ffmpeg_args(),
-            "--impersonate", "chrome",
-            "--user-agent", USER_AGENT,
-        ]
+        # 틱톡: 브라우저 impersonation 필수 (없으면 페이지 파싱 실패).
+        # 이때 --user-agent 를 같이 주면 안 된다. 흉내 기능이 쓰는 UA 를
+        # 덮어써서 앞뒤가 어긋나고, 틱톡이 그걸 알아채 막는다.
+        if can_impersonate():
+            return [*_cookie_args(), *_ffmpeg_args(), "--impersonate", "chrome"]
+        return [*_cookie_args(), *_ffmpeg_args(), "--user-agent", USER_AGENT]
     return [
         *_cookie_args(),
         *_ffmpeg_args(),

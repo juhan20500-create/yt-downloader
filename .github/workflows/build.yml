@@ -55,8 +55,9 @@ jobs:
           curl -L -o bundle/yt-dlp \
             https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos
           chmod +x bundle/yt-dlp
+          # evermeet.cx 는 2026-10 에 API 를 닫았다(410). martin-riedl.de 정적 빌드로 바꾼다.
           for t in ffmpeg ffprobe; do
-            curl -L -o "$t.zip" "https://evermeet.cx/ffmpeg/getrelease/$t/zip"
+            curl -fL -o "$t.zip" "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/$t.zip"
             unzip -q -o "$t.zip" -d bundle
             chmod +x "bundle/$t"
           done

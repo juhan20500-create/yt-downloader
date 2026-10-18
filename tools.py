@@ -116,18 +116,37 @@ def _has_impersonation(path):
         return False
 
 
+def _ytdlp_version(path):
+    """'2026.08.19' 같은 버전을 비교할 수 있게 숫자 묶음으로. 모르면 (0,)."""
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True,
+                             text=True, timeout=60).stdout.strip()
+        return tuple(int(x) for x in out.split("."))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return (0,)
+
+
 def ensure_ytdlp():
     if os.environ.get("YT_DLP_PATH"):
         return os.environ["YT_DLP_PATH"]
-    # 1) 빌드에 함께 포장된 것 — 인터넷 없이도 바로 쓴다
+    name = ("yt-dlp.exe" if sys.platform == "win32"
+            else "yt-dlp_macos" if sys.platform == "darwin" else "yt-dlp")
+    local = os.path.join(data_dir(), name)
+    # 1) 빌드에 함께 포장된 것 — 인터넷 없이도 바로 쓴다.
+    #    포장본은 실행할 때마다 임시 폴더에 새로 풀리므로, 거기서 -U 로 업데이트해도
+    #    끄면 사라진다. 그래서 사용자 폴더로 복사해 그 복사본을 쓰고 업데이트한다.
+    #    복사본이 포장본보다 낡았을 때(업데이트가 막혔던 경우)만 다시 덮어쓴다.
     for n in (_exe("yt-dlp"), "yt-dlp"):
         p = os.path.join(_bundle_dir(), n)
         if os.path.exists(p):
             _mark_exec(p)
-            return p
-    name = ("yt-dlp.exe" if sys.platform == "win32"
-            else "yt-dlp_macos" if sys.platform == "darwin" else "yt-dlp")
-    local = os.path.join(data_dir(), name)
+            try:
+                if not os.path.exists(local) or _ytdlp_version(local) < _ytdlp_version(p):
+                    shutil.copy2(p, local)
+                    _mark_exec(local)
+                return local
+            except OSError:
+                return p
     # 2) 컴퓨터에 설치된 것. 단 브라우저 흉내를 못 내면 틱톡이 통째로 안 되므로,
     #    그럴 때는 그 기능이 들어 있는 단독 실행본을 대신 쓴다.
     #    (홈브루로 깐 yt-dlp 에는 curl_cffi 가 빠져 있다)

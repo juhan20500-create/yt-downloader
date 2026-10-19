@@ -14,7 +14,7 @@ from fractions import Fraction
 # =========================================================
 # 설정
 # =========================================================
-APP_VERSION = "1.22"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
+APP_VERSION = "1.23"       # 릴리스할 때마다 올린다. 오류 화면에 같이 띄운다.
 DOWNLOAD_DIR_NAME = "다운받은 영상"
 MAX_FILENAME_LEN = 140
 BROWSER_NAMES = {"chrome": "크롬", "edge": "엣지", "whale": "웨일", "brave": "브레이브",
@@ -432,6 +432,27 @@ def truncate_filename(name: str):
             truncated = truncated[:-1]
     return ""
 
+def normalize_url(url):
+    """샤오홍슈 주소를 제대로 받아지는 형태로 맞춘다.
+
+    같은 글인데 주소가 세 가지로 돌아다니고, 결과가 다르다.
+      rednote.com/explore/ID        일반 처리기로 넘어가 화질을 못 읽는다
+      xiaohongshu.com/explore/ID    전용 처리기가 내용을 못 읽어 아예 실패한다
+      xiaohongshu.com/discovery/item/ID   ← 이것만 제대로 된다
+
+    그래서 앞의 둘을 마지막 형태로 바꾼다.
+    주소 뒤의 xsec_token 은 그대로 둔다. 그게 없으면 아무것도 못 받는다.
+    """
+    m = re.match(
+        r"https?://(?:www\.)?(?:rednote\.com|xiaohongshu\.com)"
+        r"/(?:explore|discovery/item)/([^/?#]+)(.*)$",
+        url.strip(),
+    )
+    if m:
+        return f"https://www.xiaohongshu.com/discovery/item/{m.group(1)}{m.group(2)}"
+    return url
+
+
 def extract_video_id(url: str):
     for pattern in (
         r"shorts/([a-zA-Z0-9_-]{11})",
@@ -632,6 +653,7 @@ def download_video(url: str, folder: str, title: str):
 # 메인 가이드 제어 부
 # =========================================================
 def download_full_video(url: str, folder: str):
+    url = normalize_url(url)
     video_id = extract_video_id(url)
     index = load_download_index(folder) if video_id else {}
 
